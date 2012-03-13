@@ -1,29 +1,52 @@
-import multiprocessing
+from tornado.httpclient import HTTPClient, HTTPRequest, HTTPError
+import simplejson
 
-from nosy.stream_handler import TwitterHandler
-from nosy.model import ClassificationObject
-from nosy.algorithm.lang import LanguageClassifier
+from harvester import Harvester, HarvestingComplete
+from classification_object import ClassificationObject
 
-class CorpusWorker(multiprocessing.Process):
-    def __init__(self, harvester):
-        super(CorpusWorker, self).__init__()
-        self.harvester = harvester
+class TweetHarvester(Harvester):
+    # Twitter sample stream
+    STREAM_URL = "https://stream.twitter.com/1/statuses/sample.json"
 
-    def run(self):
-        while(True):            
-            data = self.harvester.queue.get(True)
-            
-            try:
-                c = self.harvester.to_classification_object(data)
-            except KeyError:
-                continue
-            
-            c.process()
-            if LanguageClassifier._english_score(c.text.split()) > 0.8:
-                c.save()
+    def __init__(self, username, password, workers=2):
+        super(TweetHarvester, self).__init__(workers)
+        self.username = username
+        self.password = password
+        self.tweet_count = 0
 
-class TweetHarvester(TwitterHandler):
-    Worker = CorpusWorker
+    def harvest(self, limit=500):
+        req = HTTPRequest(
+            self.STREAM_URL, 
+            method="GET",
+            auth_username=self.username,
+            auth_password=self.password,
+            request_timeout=300, 
+            streaming_callback=self.handle_stream)
+
+        self.limit = limit
+        client = HTTPClient()
+        try:
+            client.fetch(req)
+        except HTTPError as e:
+            print "HTTP Error: %s" % e.message
+        except HarvestingComplete:
+            for w in self.workers:
+                w.terminate()
+            print "Completed!"
+
+    def handle_stream(self, response):
+        try:
+            json = simplejson.loads(response)
+        except ValueError:
+            return
+        self.queue.put(json)
+
+        self.tweet_count += 1
+        print "Received Tweet %d" % self.tweet_count
+        
+        if self.tweet_count == self.limit:
+            self.tweet_count = 0
+            raise HarvestingComplete()
 
     @classmethod
     def to_classification_object(cls, json):
@@ -36,4 +59,18 @@ class TweetHarvester(TwitterHandler):
         return c
 
 if __name__ == "__main__":
-    TweetHarvester.run()
+    # Command line arguments
+    import argparse
+    parser = argparse.ArgumentParser(
+        description='Tweet harvesting script for Nosy'
+    )
+    parser.add_argument('username', help='Your Twitter username')
+    parser.add_argument('password', help='Your Twitter password')
+    parser.add_argument('-processes', dest='workers', type=int, default=2, help='Number of worker processes')
+    parser.add_argument('-tweets', dest='tweets', type=int, default=500, help='Number of tweets to harvest')
+    args = parser.parse_args()
+
+    # Initialise Tweet Harvester
+    t = TweetHarvester(args.username, args.password, workers=args.workers)
+    t.harvest(limit=args.tweets)
+        
