@@ -2,84 +2,83 @@ import tornado.ioloop
 import tornado.web
 import simplejson
 import pymongo
-import os
-import redis
+from datetime import datetime
 
 from nosy.model import ClassifiedObject
 import nosy.util
-from tweet_classifier import TweetClassifier
-
-class StreamHandler(tornado.web.RequestHandler):
-    # curl -i -X POST -d @_stream.json -H 'Content-type:application/json' -v http://localhost:7777/classify/stream
-    def post(self):
-        _redis = redis.Redis()
-        try:
-            tags = simplejson.loads(self.request.body) #tornado.escape.json_decode(self.request.body)
-        except ValueError:
-            raise tornado.httpserver._BadRequestException("Invalid JSON structure.")
-
-        _redis.set('nosy:classifying:thresholds', simplejson.dumps(tags))
-
-        os.system('python tweet_classifier.py -processes 1 -tweets 1000 YAP_nosy yetanotherproject &')
-        json = simplejson.dumps({'success': True})
-
-        self.set_header('Content-Type', 'application/json')
-        self.write(json)
 
 class ClassifyHandler(tornado.web.RequestHandler):
-    @classmethod
-    def parse_json(self, data):
-        json = simplejson.loads(data)
-        if not json:
-            raise ValueError
-        return json
 
-    @classmethod
-    def parse_txt(self, data):
-        DELIMITER = '\n'
-        return self.convert(data, DELIMITER)
-
-    @classmethod
-    def parse_csv(self, data):
-        DELIMITER = ','
-        return self.convert(data, DELIMITER)
-
-    @classmethod
-    def convert(self, data, delimiter):
-        print data
-        return [{'text': line} for line in map( lambda x: x.lower(), data.split(delimiter)) if line]
-
-
-    def post(self, format):
-        encoding = {
-            'json': self.parse_json,
-            'txt': self.parse_txt,
-            'csv': self.parse_csv
-        }
-
+    def get(self):
         try:
-            fn = encoding[format]
-            print fn.__name__
-        except KeyError:
-            raise tornado.web.HTTPError(404, "Format %s not supported" % format)
-        
-        try:
-            data = fn(self.request.body)
-            print data
+            limit = int(self.get_argument('limit', 10))
         except ValueError:
-            raise tornado.httpserver._BadRequestException("Invalid JSON structure.")
-        
-        # _redis = redis.Redis()
+            raise tornado.web.HTTPError(400)
 
-        # get the features and map to the id
-        # features = [ (c_id, feature_extractor(text)) for c_id, text in data['data'] ]
-        
-        # classify the text and store the result under each id
-        # classifier = _redis.get('nosy:classifier:naivebayes')
-        # result = [(c_id, type_classifier.classify(feature)) for c_id, feature in features]
+        query = {}
 
-        # self.set_header('Content-Type', 'application/json')
-        # self.write(simplejson.dumps(result))
+        # Search for classified objects exceeding thresholds if supplied
+        thresholds = self.get_argument('thresholds', None)
+        if thresholds:
+            thresholds = simplejson.loads(thresholds)
+            for tag, threshold in thresholds.iteritems():
+                query['tags.' + tag] = { '$gte' : threshold }
+
+        # Limit to a daterange if supplied
+        start_time = self.get_argument('start_time', None)
+        if start_time:
+            start_time = datetime.fromtimestamp(long(start_time))
+            query['last_modified'] = {}
+            query['last_modified']['$gte'] = start_time
+
+        end_time = self.get_argument('end_time', None)
+        if end_time:
+            end_time = datetime.fromtimestamp(long(end_time))
+            if 'last_modified' not in query:
+                query['last_modified'] = {}
+            query['last_modified']['$lte'] = end_time
+
+        results = ClassifiedObject.find(
+            query=query,
+            limit=limit,
+            sort=[("last_modified", pymongo.DESCENDING)]
+        )
+
+        dicts = [ c.to_dict() for c in results ]
+        json = simplejson.dumps(dicts, default=nosy.util.json_serializer)
+
+        self.set_header("Content-Type", "application/json")
+        self.write(json)
+
+    # def post(self):
+    #     try:
+    #         c_obj = self.get_argument('classification_object')
+    #     except TypeError:
+    #         raise tornado.web.HTTPError(500, 'Classification objected allowed')
+
+    #     # perform classification on the given object
+
+    # def put(self):
+    #     '''
+    #     Returns 200 on success, 4xx on failure
+    #     '''
+
+    #     self.set_status(200)
+
+    # @classmethod
+    # def _json_serializer(cls, obj):
+    #     if hasattr(obj, 'isoformat'):
+    #         return obj.isoformat()
+    #     else:
+    #         raise TypeError, 'Object of type %s with value of %s is not JSON serializable' % (type(obj), repr(obj))
+
+# class StreamHandler(tornado.web.RequestHandler):
+#     def post(self):
+#         os.system('python tweet_classifier.py -processes 1 -tweets 1000 YAP_nosy yetanotherproject &')
+#         json = simplejson.dumps({'success': True})
+
+#         self.set_header('Content-Type', 'application/json')
+#         self.write(json)
 
 # class TrainHandler(tornado.web.RequestHandler):
 #     def post(self):
@@ -151,8 +150,8 @@ class ClassifyHandler(tornado.web.RequestHandler):
 #     pass
 
 application = tornado.web.Application([
-    (r"/classify/(json|csv|txt)", ClassifyHandler),
-    (r"/classify/stream", StreamHandler),
+    (r"/classify", ClassifyHandler),
+    # (r"/classify/stream", StreamHandler),
     # (r"/train", TrainHandler),
     # (r"/test", TestHandler),
     # (r"/algorithm/([0-9]+)", AlgorithmHandler),
