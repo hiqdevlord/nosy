@@ -1,13 +1,11 @@
 import multiprocessing
 import simplejson
 import redis
-import random
 import sys
 
 from nosy.stream_handler import TwitterHandler
 from nosy.model import ClassifiedObject
 from nosy.algorithm.lang import LanguageClassifier
-from nosy.algorithm.random_classifier import RandomClassifier
 import nosy.util
 
 class ClassifierWorker(multiprocessing.Process):
@@ -33,7 +31,6 @@ class ClassifierWorker(multiprocessing.Process):
                 continue
             
             c.process()
-            RandomClassifier.classify(c)
             LanguageClassifier.classify(c)
             if (c.tags['english'] > 0.8):
                 self.publish(c)
@@ -50,11 +47,7 @@ class TweetClassifier(TwitterHandler):
         c.text = json['text']
         c.created_at = json['created_at']
         c.author = json['user']['screen_name']
-        c.location = json['geo'] or \
-            { 
-                'longitude' : 18 + random.random(),
-                'latitude' : 59 + random.random()
-            }
+        c.location = json['geo']
 
         return c
 
