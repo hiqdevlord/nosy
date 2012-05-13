@@ -25,17 +25,16 @@ class MongoOpenStruct(OpenStruct):
 
     @classmethod
     def find_by_id(cls, id):
-        data = cls.coll.find_one( { '_id' : cls.ID_TYPE(id) } )
+        data = cls.coll.find_one( { '_id' : long(id) } )
         if not data:
             return data #raise Exception('No document found')
         return cls(data)
 
     @classmethod
-    def find(cls, query=None, **kwargs):
+    def find(cls, query=None, skip=0, limit=25, **kwargs):
         if not query: query = {}
-        docs = cls.coll.find(query, **kwargs)
-        for d in docs: 
-            yield(cls(d))
+        docs = cls.coll.find(query, skip=skip, limit=limit, **kwargs)
+        return [ cls(data) for data in docs ]
 
     def save(self):
         self.last_modified = datetime.utcnow()
@@ -59,7 +58,3 @@ class MongoOpenStruct(OpenStruct):
         del action['$set']['_id']
 
         return query, action
-
-    @classmethod
-    def remove(cls, query):
-        cls.coll.remove(query)

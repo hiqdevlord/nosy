@@ -1,27 +1,15 @@
 import multiprocessing
 import simplejson
 import redis
-import random
 import sys
 
-from nosy.model import ClassifiedObject
-import nosy.util
 from nosy.stream_handler import TwitterHandler
+from nosy.model import ClassifiedObject
 from nosy.algorithm.lang import LanguageClassifier
-from nosy.algorithm.naive_bayes import NaiveBayesClassifier
+import nosy.util
 
 class ClassifierWorker(multiprocessing.Process):
     _redis = redis.Redis()
-    THRESHOLDS_KEY = 'nosy:classify:thresholds'
-    THRESHOLDS = { k: float(v) for k,v in _redis.hgetall(THRESHOLDS_KEY).iteritems() }
-    NAIVE_BAYES = NaiveBayesClassifier.load()
-
-    @classmethod
-    def exceeds_thresholds(cls, c):
-        for tag, confidence in c.tags.iteritems():
-            if confidence < cls.THRESHOLDS.get(tag, 0):
-                return False
-        return True
 
     def __init__(self, harvester):
         super(ClassifierWorker, self).__init__()
@@ -36,18 +24,15 @@ class ClassifierWorker(multiprocessing.Process):
     def run(self):
         while(True):            
             data = self.harvester.queue.get(True, timeout=120)
-
+            
             try:
                 c = self.harvester.to_classification_object(data)
             except KeyError:
                 continue
             
             c.process()
-            
             LanguageClassifier.classify(c)
-            self.NAIVE_BAYES.classify(c)
-
-            if (self.exceeds_thresholds(c)):
+            if (c.tags['english'] > 0.8):
                 self.publish(c)
                 c.save()
 
@@ -62,13 +47,23 @@ class TweetClassifier(TwitterHandler):
         c.text = json['text']
         c.created_at = json['created_at']
         c.author = json['user']['screen_name']
-        c.location = json['geo'] or \
-            { 
-                'longitude' : 18 + random.random(),
-                'latitude' : 59 + random.random()
-            }
+        c.location = json['geo']
 
-        return c    
+        return c
+
+    #Only harvest if not already harvesting
+    def harvest(self, limit=1000):
+        _redis = ClassifierWorker._redis
+        running = _redis.get('nosy:classifying') == 'true'
+        if running:
+            print "Already running!"
+            for w in self.workers:
+                w.terminate()
+            sys.exit(1)
+        else:
+            _redis.set('nosy:classifying', 'true')
+            super(TweetClassifier, self).harvest(limit=limit)
+            _redis.delete('nosy:classifying')    
 
 if __name__ == "__main__":
     TweetClassifier.run()
