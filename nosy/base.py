@@ -7,8 +7,6 @@ import re
 from mongo_open_struct import MongoOpenStruct
 
 class Base(MongoOpenStruct):
-    ID_TYPE = long
-
     def __init__(self, data=None, **kwargs):
         super(Base, self).__init__(data, **kwargs)
 
