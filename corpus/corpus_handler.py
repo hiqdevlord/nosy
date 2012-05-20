@@ -47,13 +47,12 @@ class CorpusHandler(tornado.web.RequestHandler):
         self.set_header("Content-Type", "application/json")
         self.write(json)
 
-    #  curl -X PUT -d "tags=funny" http://localhost:8888/corpus?id=<id>
-    # or curl -X PUT "http://localhost:8888/corpus?id=<id>&tags=<t1,t2,...>"
-    def put(self):
+    #  curl -X PUT -d "tags=funny" http://localhost:8888/corpus/<id>
+    def put(self, doc_id):
         try:
-            doc_id = int(self.get_argument('id'))
+            doc_id = int(doc_id)
         except ValueError:
-            raise tornado.web.HTTPError(400, "Expecting integer value")
+            raise tornado.web.HTTPError(400)
 
         tags = self.get_argument('tags', None)
         if tags:
@@ -65,35 +64,11 @@ class CorpusHandler(tornado.web.RequestHandler):
             c.tags = tags
             c.save()
         else:
-            raise tornado.web.HTTPError(404, "Could not find document with id %i" % doc_id)
+            raise tornado.web.HTTPError(404)
 
-        json = simplejson.dumps({'success': True, 'message' : "Updated document with id %i" % doc_id,
-            'tags' : tags})
+        json = simplejson.dumps({'success': True})
         self.set_header('Content-Type', 'application/json')
         self.write(json)
-
-    # curl -X DELETE "http://localhost:8888/corpus?id=<id>&tags=<t1,t2,...>"
-    def delete(self):
-        try:
-            doc_id = int(self.get_argument('id'))
-        except ValueError:
-            raise tornado.web.HTTPError(400, "Expecting integer value")
-
-        query = {
-            '_id' : doc_id
-        }
-        tags = self.get_argument('tags', None)
-        if tags:
-            tags = map( lambda t: t.lower(), tags.split(','))
-            query['tags'] = tags
-
-        c = ClassificationObject.find_by_id(doc_id)
-        if c:
-            res = c.remove(query)
-        else:
-            raise tornado.web.HTTPError(404, "Could not find document with id %i" % doc_id)
-
-        raise tornado.web.HTTPError(200, "Document id %i successfully deleted" % doc_id)
 
 class TagsHandler(tornado.web.RequestHandler):
     def get(self):
@@ -103,9 +78,68 @@ class TagsHandler(tornado.web.RequestHandler):
         self.set_header("Content-Type", "application/json")
         self.write(json)
 
+# class TrainingHandler(tornado.web.RequestHandler):
+#     def get(self):
+#         try:
+#             tags = self.get_argument('tags');
+#         except ValueError:
+#             raise tornado.web.HTTPError(400); # tags is required
+
+#         # get all tags passed as argument and convert into list
+#         # JCA: experience encoding issues on Ubuntu 10.04. Get [u'val1', u'val2', ... ]
+#         tags = map(lambda t: t.lower(), tags.split(','))
+
+#         print tags, '\n'
+
+#         # find all objects where all tag in tags is present
+#         query = { 'tags' : { '$in' : tags } }
+#         results = ClassificationObject.find(
+#             query = query,
+#             limit = 10,
+#             sort = [("last_modified", pymongo.DESCENDING)]
+#         )
+
+#         dicts = [ c.to_dict() for c in results ]
+#         json = simplejson.dumps(dicts, default=_json_serializer)
+
+#         self.set_header("Content-Type", "application/json")
+#         self.write(json)
+
+# # curl -X POST -d "amount=10&username=joakim&password=secret" http://localhost:8888/harvest/twitter
+# class HarvestHandler(tornado.web.RequestHandler):
+#     '''
+#     Preferrably: Call file 'source'_harvester.py
+#     '''    
+#     def get(self, source):
+#         self.write('Source for data mining is %s' % source)
+
+#     # tweet harvester
+#     def post(self, source): # why not just get if only amount
+#         try:
+#             amount = int(self.get_argument('amount', 10))
+#         except ValueError:
+#             raise e
+
+#         try:
+#             username = self.get_argument('username', 'username')
+#         except TypeError:
+#             raise ''
+
+#         try:
+#             password = self.get_argument('password', 'password') 
+#         except TypeError:
+#             raise ''
+
+#         #t = TweetHarvester(username, password, 10)
+#         #t.harvest(amount)
+#         self.write('Amount %d. Credentials for %s = Username: %s and password: %s \n' % (amount, source, username, password))
+
 application = tornado.web.Application([
     (r'/corpus', CorpusHandler), 
+    (r'/corpus/([0-9]+)', CorpusHandler),
     (r'/corpus/tags', TagsHandler),
+#    (r"/training", TrainingHandler),
+#    (r"/harvest/([a-zA-Z]+)", HarvestHandler),
 ])
 
 if __name__ == "__main__":
